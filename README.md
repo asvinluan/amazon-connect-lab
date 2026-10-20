@@ -1,6 +1,3 @@
-[ Terraform Badge ]
-[ Python Badge ]
-
 # Amazon Connect reference lab
 
 A small, runnable Amazon Connect contact centre defined entirely in Terraform, with a Python Lambda on the voice path, a credential-broker API behind API Gateway for web chat, CloudWatch alarms tied to failures this build can actually produce, and a GitHub Actions pipeline that checks and plans on every pull request.
