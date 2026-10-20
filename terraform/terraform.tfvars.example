@@ -1,0 +1,17 @@
+# Copy to terraform.tfvars and edit. terraform.tfvars is gitignored
+# so your account id and alias never reach the repository.
+
+region = "ap-southeast-2"
+
+# Must be globally unique within the region: this becomes the subdomain
+# of your Connect access URL, https://<alias>.my.connect.aws
+instance_alias = "changeme-connect-lab"
+
+# Where CloudWatch alarms notify. Leave empty to create the SNS topic
+# without a subscription.
+alarm_email = ""
+
+# Queue capacity. Deliberately small so the "At capacity" branch of
+# Transfer to queue can actually be tested -- on an unbounded queue it
+# never fires and the deflection path is dead code you never see run.
+queue_max_contacts = 5

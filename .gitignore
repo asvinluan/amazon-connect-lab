@@ -1,0 +1,26 @@
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+tfplan
+plan.txt
+
+# Never commit real values: these hold account ids, instance ids, phone numbers
+*.tfvars
+!*.tfvars.example
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+build/
+*.zip
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store

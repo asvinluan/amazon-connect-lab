@@ -1,0 +1,5 @@
+# Single-maintainer lab repository.
+# In a team repo these paths would carry different reviewer groups --
+# IAM and retention changes should never be self-approved.
+*                       @REPLACE_WITH_YOUR_GITHUB_USERNAME
+/terraform/iam*.tf      @REPLACE_WITH_YOUR_GITHUB_USERNAME

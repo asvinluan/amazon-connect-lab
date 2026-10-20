@@ -1,0 +1,16 @@
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S"]
+ignore = [
+  "S101",  # assert is correct in tests
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S105", "S106"]  # fake credentials in conftest are intentional
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["lambda/caller_lookup"]
