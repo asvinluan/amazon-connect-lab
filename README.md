@@ -1,3 +1,4 @@
+<img width="2701" height="2268" alt="image" src="https://github.com/user-attachments/assets/883599bd-6d9d-4119-aa76-68b5d9b584c5" />
 # Amazon Connect reference lab
 
 A small, runnable Amazon Connect contact centre defined entirely in Terraform, with a Python Lambda on the voice path, a credential-broker API behind API Gateway for web chat, CloudWatch alarms tied to failures this build can actually produce, and a GitHub Actions pipeline that checks and plans on every pull request.
