@@ -63,7 +63,7 @@ jobs:
           tflint --recursive --format compact
 
       - name: Trivy IaC scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@master
         with:
           scan-type: config
           scan-ref: terraform
