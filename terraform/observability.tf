@@ -10,9 +10,19 @@
 # ContactFlowName.
 # ---------------------------------------------------------------------------
 
+resource "aws_kms_key" "sns" {
+  description             = "KMS key for SNS topic encryption"
+  deletion_window_in_days = 7
+}
+
+resource "aws_kms_alias" "sns" {
+  name          = "alias/${var.instance_alias}-sns"
+  target_key_id = aws_kms_key.sns.key_id
+}
+
 resource "aws_sns_topic" "alarms" {
   name              = "${var.instance_alias}-alarms"
-  kms_master_key_id = "alias/aws/sns"
+  kms_master_key_id = aws_kms_key.sns.arn
 }
 
 resource "aws_sns_topic_subscription" "alarm_email" {
