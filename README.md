@@ -90,11 +90,12 @@ Getting that distinction wrong is common, so it is called out in the comments of
 |`terraform/flows/main.json.tftpl`|The contact flow as a template, with ARNs injected at apply time|
 |`lambda/caller\_lookup/`|Invoked by the flow. Timeout budget, graceful degradation|
 |`lambda/chat\_broker/`|Behind API Gateway. Returns a token, never credentials|
-|`lambda/salesforce\_lookup/`|Looks the caller up in a Salesforce Contact (REST, OAuth 2.0). Not wired into the flow|
+|`lambda/salesforce\_lookup/`|Looks the caller up in a Salesforce Contact (REST, OAuth 2.0). Invoked by `lab-salesforce-flow`|
 |`terraform/salesforce.tf`|That Lambda, its log group and a role scoped to one action on one secret|
+|`terraform/salesforce\_flow.tf`, `terraform/flows/salesforce.json.tftpl`|Second contact flow that invokes the Salesforce lookup, copies the name into contact attributes and greets the caller|
 |`lambda/recording\_router/`|Reacts to a file landing in S3 (event-driven). Idempotent writes, retries, dead-letter queue|
 |`terraform/events.tf`|The encrypted bucket, DynamoDB table, S3 trigger, dead-letter queue and its alarm|
-|`tests/`|Unit tests pinning the behaviour that keeps the Lambdas safe: 7 for `caller_lookup`, 20 for the Salesforce lookup, 15 for the recording router|
+|`tests/`|Unit tests pinning the behaviour that keeps the Lambdas safe (7 `caller_lookup`, 20 Salesforce lookup, 15 recording router) and 18 structural checks on the contact flow JSON|
 |`scripts/audit\_flow.py`|Fails the build on dangling branches or broken references in flow JSON|
 |`scripts/export\_flows.sh`|Exports flows to disk and reports unpublished designer edits|
 |`.github/workflows/`|Terraform checks and plan; Python lint and test|
@@ -122,7 +123,7 @@ Contact attributes are string-valued, flat, and capped at 32 KB. The handler coe
 
 ## Salesforce caller lookup
 
-A second take on the caller lookup: instead of a DynamoDB table, the Lambda asks a **Salesforce Developer Edition** org who is calling. It is a separate function (`lambda/salesforce_lookup/`) and is **not wired into the contact flow** — the voice path above is unchanged. It is tested on its own from the Lambda console.
+A second take on the caller lookup: instead of a DynamoDB table, the Lambda asks a **Salesforce Developer Edition** org who is calling. It is a separate function (`lambda/salesforce_lookup/`). It is invoked by its own flow, `lab-salesforce-flow` (`terraform/salesforce_flow.tf`), which copies the name into contact attributes, greets the caller by name and queues them. `lab-main-flow` and the voice path above are unchanged. The function can also be tested on its own from the Lambda console.
 
 ```text
 event (caller number) -> Lambda -> Secrets Manager (client id, secret, org URL)
@@ -172,7 +173,7 @@ S3 bucket (incoming/)  ->  Lambda recording_router  ->  DynamoDB (one row per fi
 * **The function never reads the file.** It works from the event metadata only, so its role has no S3 or KMS permission, just `dynamodb:PutItem` on one table and `sqs:SendMessage` on one queue.
 * **A private, encrypted bucket.** Public access blocked, versioning on, a customer-managed KMS key with rotation, and files expire after 7 days so a lab cannot quietly accumulate cost.
 
-**Try it:** upload any file under `incoming/` in the bucket named by `terraform output recordings_bucket`, then look at the DynamoDB table named by `terraform output recording_events_table`. Upload the identical file again and there is still one row; the Lambda log says the delivery was a duplicate.
+**Try it:** upload any file under `incoming/` in the bucket named by `terraform output recordings_bucket`, then look at the DynamoDB table named by `terraform output recording_events_table`. To see the duplicate protection, replay the same S3 event twice from the Lambda console Test tab: the first call returns `recorded: 1`, the second `duplicate: 1`, and the table still has one row. (Uploading the same file again is a new object with a new ETag, so it is correctly a new row.)
 
 ---
 
@@ -211,7 +212,7 @@ Terraform builds the instance, queue, routing profile, flow, both Lambdas, the A
 ### Test
 
 ```bash
-pytest -q                                   # 42 tests, no AWS or Salesforce access needed
+pytest -q                                   # 60 tests, no AWS or Salesforce access needed
 python3 scripts/audit\_flow.py terraform/flows/main.json.tftpl
 ```
 
@@ -235,7 +236,7 @@ A short list of what this is not, because a repository that claims more than it 
 * **No WAF.** Omitted on cost. In production a web ACL with a rate-based rule belongs in front of the chat API via CloudFront — every request the broker serves creates a real contact occupying a real queue slot, so rate limiting there is queue-flood protection rather than generic web hygiene.
 * **No authentication on the chat endpoint.** A real deployment would put the broker behind an authenticated session, so the queue slot is attributable to someone.
 * **Terraform-managed flow JSON is workable, not pleasant.** It is verbose and the diffs are noisy. On a large estate I would author flows in the console, export, template and commit them, with the pipeline enforcing that production only ever changes through the repository. Hand-editing flow JSON looks rigorous and produces bugs.
-* **The Salesforce lookup is not connected to a contact flow.** It returns the right answer from the Lambda console; invoking it from the flow, copying the result into contact attributes and showing it to the agent (a screen pop, or Service Cloud Voice) is not built. It matches one Contact by exact phone number only, and uses a free Developer Edition org with fictional data.
+* **The Salesforce flow greets by name; it does not screen-pop.** `lab-salesforce-flow` invokes the lookup and copies the name into contact attributes. Showing it to the agent (a screen pop, or Service Cloud Voice) is not built. It matches one Contact by exact phone number (E.164 or 04xx form). The flow is exercised by hand (flow designer test or a claimed number), not in CI; CI checks the flow JSON structure only.
 * **The recording router only records arrivals.** It does not read, transcribe or redact a recording, the bucket is not connected to Connect's recording settings, and nothing redrives messages from the dead-letter queue: a person looks at them. Retries are 2, set in Terraform, and the alarm fires on any message waiting in the queue.
 * **One queue, one routing profile.** Enough to demonstrate priority and delay; not a routing model.
 

@@ -1,9 +1,9 @@
 # ---------------------------------------------------------------------------
 # salesforce_lookup -- looks the caller up in a Salesforce Contact.
 #
-# A third Lambda, kept apart from caller_lookup on purpose: it is NOT wired
-# into the contact flow, so the working voice path is untouched while the
-# Salesforce integration is proven on its own.
+# A third Lambda, kept apart from caller_lookup on purpose: lab-main-flow still
+# uses caller_lookup, so the working voice path is untouched. This function is
+# invoked by its own flow, lab-salesforce-flow (see salesforce_flow.tf).
 #
 # The credentials live in AWS Secrets Manager, not in this repository and not
 # in Terraform state. Terraform only READS the secret's address (a data source

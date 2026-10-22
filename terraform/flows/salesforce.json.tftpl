@@ -1,0 +1,159 @@
+{
+  "Version": "2019-10-30",
+  "StartAction": "A01-SetLogging",
+  "Metadata": {
+    "entryPointPosition": { "x": 20, "y": 20 },
+    "ActionMetadata": {
+      "A01-SetLogging":      { "position": { "x": 160, "y": 20 } },
+      "A02-SetVoice":        { "position": { "x": 160, "y": 140 } },
+      "A03-InvokeLookup":    { "position": { "x": 160, "y": 260 } },
+      "A04-SetAttributes":   { "position": { "x": 160, "y": 400 } },
+      "A05-SetUnknown":      { "position": { "x": 420, "y": 400 } },
+      "A06-Greet":           { "position": { "x": 160, "y": 540 } },
+      "A07-SetWorkingQueue": { "position": { "x": 160, "y": 660 } },
+      "A08-TransferToQueue": { "position": { "x": 160, "y": 780 } },
+      "A09-EndFlow":         { "position": { "x": 160, "y": 920 } },
+      "A10-AtCapacity":      { "position": { "x": 420, "y": 780 } },
+      "A11-TransferFailed":  { "position": { "x": 680, "y": 780 } },
+      "A12-Disconnect":      { "position": { "x": 420, "y": 920 } }
+    }
+  },
+  "Actions": [
+    {
+      "Identifier": "A01-SetLogging",
+      "Type": "UpdateFlowLoggingBehavior",
+      "Parameters": { "FlowLoggingBehavior": "Enabled" },
+      "Transitions": { "NextAction": "A02-SetVoice", "Errors": [], "Conditions": [] }
+    },
+    {
+      "Identifier": "A02-SetVoice",
+      "Type": "UpdateContactTextToSpeechVoice",
+      "Parameters": {
+        "TextToSpeechEngine": "Neural",
+        "TextToSpeechStyle": "None",
+        "TextToSpeechVoice": "Olivia"
+      },
+      "Transitions": { "NextAction": "A03-InvokeLookup", "Errors": [], "Conditions": [] }
+    },
+    {
+      "Identifier": "A03-InvokeLookup",
+      "Type": "InvokeLambdaFunction",
+      "Parameters": {
+        "LambdaFunctionARN": "${lambda_arn}",
+        "InvocationTimeLimitSeconds": "5",
+        "ResponseValidation": { "ResponseType": "STRING_MAP" }
+      },
+      "Transitions": {
+        "NextAction": "A04-SetAttributes",
+        "Errors": [
+          {
+            "NextAction": "A05-SetUnknown",
+            "ErrorType": "NoMatchingError"
+          }
+        ],
+        "Conditions": []
+      }
+    },
+    {
+      "Identifier": "A04-SetAttributes",
+      "Type": "UpdateContactAttributes",
+      "Parameters": {
+        "Attributes": {
+          "callerName": "$.External.callerName",
+          "lookupStatus": "$.External.status"
+        }
+      },
+      "Transitions": {
+        "NextAction": "A06-Greet",
+        "Errors": [{ "NextAction": "A06-Greet", "ErrorType": "NoMatchingError" }],
+        "Conditions": []
+      }
+    },
+    {
+      "Identifier": "A05-SetUnknown",
+      "Type": "UpdateContactAttributes",
+      "Parameters": {
+        "Attributes": {
+          "callerName": "there",
+          "lookupStatus": "lambda_error"
+        }
+      },
+      "Transitions": {
+        "NextAction": "A06-Greet",
+        "Errors": [{ "NextAction": "A06-Greet", "ErrorType": "NoMatchingError" }],
+        "Conditions": []
+      }
+    },
+    {
+      "Identifier": "A06-Greet",
+      "Type": "MessageParticipant",
+      "Parameters": {
+        "Text": "Hello $.Attributes.callerName. Thanks for calling the lab line. Connecting you to an agent now."
+      },
+      "Transitions": {
+        "NextAction": "A07-SetWorkingQueue",
+        "Errors": [{ "NextAction": "A07-SetWorkingQueue", "ErrorType": "NoMatchingError" }],
+        "Conditions": []
+      }
+    },
+    {
+      "Identifier": "A07-SetWorkingQueue",
+      "Type": "UpdateContactTargetQueue",
+      "Parameters": { "QueueId": "${queue_arn}" },
+      "Transitions": {
+        "NextAction": "A08-TransferToQueue",
+        "Errors": [{ "NextAction": "A11-TransferFailed", "ErrorType": "NoMatchingError" }],
+        "Conditions": []
+      }
+    },
+    {
+      "Identifier": "A08-TransferToQueue",
+      "Type": "TransferContactToQueue",
+      "Parameters": {},
+      "Transitions": {
+        "NextAction": "A09-EndFlow",
+        "Errors": [
+          { "NextAction": "A10-AtCapacity", "ErrorType": "QueueAtCapacity" },
+          { "NextAction": "A11-TransferFailed", "ErrorType": "NoMatchingError" }
+        ],
+        "Conditions": []
+      }
+    },
+    {
+      "Identifier": "A09-EndFlow",
+      "Type": "EndFlowExecution",
+      "Parameters": {},
+      "Transitions": {}
+    },
+    {
+      "Identifier": "A10-AtCapacity",
+      "Type": "MessageParticipant",
+      "Parameters": {
+        "Text": "Sorry, all our agents are busy and the queue is full. Please try again shortly."
+      },
+      "Transitions": {
+        "NextAction": "A12-Disconnect",
+        "Errors": [{ "NextAction": "A12-Disconnect", "ErrorType": "NoMatchingError" }],
+        "Conditions": []
+      }
+    },
+    {
+      "Identifier": "A11-TransferFailed",
+      "Type": "MessageParticipant",
+      "Parameters": {
+        "Text": "Sorry, we cannot connect your call right now. Please try again later."
+      },
+      "Transitions": {
+        "NextAction": "A12-Disconnect",
+        "Errors": [{ "NextAction": "A12-Disconnect", "ErrorType": "NoMatchingError" }],
+        "Conditions": []
+      }
+    },
+    {
+      "Identifier": "A12-Disconnect",
+      "Type": "DisconnectParticipant",
+      "Parameters": {},
+      "Transitions": {}
+    }
+  ]
+}

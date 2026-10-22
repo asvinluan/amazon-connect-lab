@@ -30,8 +30,13 @@ output "dashboard_url" {
   value = "https://${var.region}.console.aws.amazon.com/cloudwatch/home?region=${var.region}#dashboards:name=${aws_cloudwatch_dashboard.lab.dashboard_name}"
 }
 
+output "salesforce_flow_id" {
+  description = "Contact flow that invokes the Salesforce lookup. Attach a claimed number to it, or open it in the admin site and use Test."
+  value       = aws_connect_contact_flow.salesforce.contact_flow_id
+}
+
 output "salesforce_lookup_function_name" {
-  description = "Salesforce caller lookup Lambda. Test it from the Lambda console with a Contact's phone number; it is not wired into the contact flow."
+  description = "Salesforce caller lookup Lambda. Test it from the Lambda console with a Contact's phone number, or through lab-salesforce-flow."
   value       = aws_lambda_function.salesforce_lookup.function_name
 }
 

@@ -2,8 +2,9 @@
 
 Same job as ``caller_lookup`` (who is calling?), but the answer comes from a
 Salesforce Contact instead of a DynamoDB table. It is a separate function on
-purpose: it is not wired into the lab's contact flow, so the working voice path
-is untouched while this is proven on its own.
+purpose: the lab's main contact flow still uses caller_lookup, so the working
+voice path is untouched; this function is invoked by its own flow,
+lab-salesforce-flow.
 
 What it does, in order
 ----------------------
