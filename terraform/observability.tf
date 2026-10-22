@@ -1,7 +1,7 @@
 # ---------------------------------------------------------------------------
 # Observability.
 #
-# Four alarms, each tied to a failure this lab can actually produce. An alarm
+# Five alarms, each tied to a failure this lab can actually produce. An alarm
 # that cannot fire teaches nothing and is worse than no alarm, because it
 # looks like coverage.
 #
@@ -10,9 +10,37 @@
 # ContactFlowName.
 # ---------------------------------------------------------------------------
 
+# resource "aws_kms_key" "sns" {
+#  description             = "KMS key for SNS topic encryption"
+#  deletion_window_in_days = 7
+# }
+
+data "aws_caller_identity" "current" {}
+
 resource "aws_kms_key" "sns" {
   description             = "KMS key for SNS topic encryption"
   deletion_window_in_days = 7
+  enable_key_rotation     = true
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "AllowAccountAdmin"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }
+        Action    = "kms:*"
+        Resource  = "*"
+      },
+      {
+        Sid       = "AllowCloudWatchAlarms"
+        Effect    = "Allow"
+        Principal = { Service = "cloudwatch.amazonaws.com" }
+        Action    = ["kms:Decrypt", "kms:GenerateDataKey*"]
+        Resource  = "*"
+      }
+    ]
+  })
 }
 
 resource "aws_kms_alias" "sns" {
