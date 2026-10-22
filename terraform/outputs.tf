@@ -35,6 +35,21 @@ output "salesforce_lookup_function_name" {
   value       = aws_lambda_function.salesforce_lookup.function_name
 }
 
+output "recordings_bucket" {
+  description = "Upload a file under incoming/ to trigger the recording router."
+  value       = aws_s3_bucket.recordings.bucket
+}
+
+output "recording_router_function_name" {
+  description = "Lambda that reacts to S3 ObjectCreated events."
+  value       = aws_lambda_function.recording_router.function_name
+}
+
+output "recording_events_table" {
+  description = "DynamoDB table with one row per file that arrived."
+  value       = aws_dynamodb_table.recording_events.name
+}
+
 output "next_steps" {
   description = "What Terraform cannot do for you."
   value       = <<-EOT

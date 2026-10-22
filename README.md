@@ -92,7 +92,9 @@ Getting that distinction wrong is common, so it is called out in the comments of
 |`lambda/chat\_broker/`|Behind API Gateway. Returns a token, never credentials|
 |`lambda/salesforce\_lookup/`|Looks the caller up in a Salesforce Contact (REST, OAuth 2.0). Not wired into the flow|
 |`terraform/salesforce.tf`|That Lambda, its log group and a role scoped to one action on one secret|
-|`tests/`|Unit tests pinning the behaviour that keeps both Lambdas safe: 7 for `caller_lookup`, 20 for the Salesforce lookup|
+|`lambda/recording\_router/`|Reacts to a file landing in S3 (event-driven). Idempotent writes, retries, dead-letter queue|
+|`terraform/events.tf`|The encrypted bucket, DynamoDB table, S3 trigger, dead-letter queue and its alarm|
+|`tests/`|Unit tests pinning the behaviour that keeps the Lambdas safe: 7 for `caller_lookup`, 20 for the Salesforce lookup, 15 for the recording router|
 |`scripts/audit\_flow.py`|Fails the build on dangling branches or broken references in flow JSON|
 |`scripts/export\_flows.sh`|Exports flows to disk and reports unpublished designer edits|
 |`.github/workflows/`|Terraform checks and plan; Python lint and test|
@@ -149,6 +151,31 @@ Salesforce phone fields are free text, so the match is exact: the lookup tries t
 
 ---
 
+## Event-driven recording router
+
+The first two Lambdas are called by something (Connect, or API Gateway). This one is not called by anything: a file lands in S3 and Lambda reacts. It is a separate function, not wired into the contact flow, built to show the event-driven plumbing rather than any one business rule.
+
+```text
+S3 bucket (incoming/)  ->  Lambda recording_router  ->  DynamoDB (one row per file)
+                                  |
+                                  +-- fails after 2 retries -> SQS dead-letter queue
+                                                              -> CloudWatch alarm -> SNS email
+```
+
+**What it does and why**
+
+* **S3 `ObjectCreated` event triggers Lambda.** Uploading to `incoming/` is the only thing that starts it. The function records the arrival in DynamoDB. In a real contact centre the same trigger would start transcription, redaction or archiving; here the plumbing is the point.
+* **Idempotent writes.** S3 delivers events at least once, so the same event can arrive twice. Each row is written with a conditional put keyed on the object key plus its ETag, so a duplicate delivery is recognised and skipped. It is not an error and it does not overwrite anything.
+* **Failures are loud, expected conditions are quiet.** S3 invokes Lambda asynchronously, so there is no caller to hand an error to. A malformed event or a failed DynamoDB write raises; Lambda retries twice and then parks the event in an SQS dead-letter queue. A duplicate, or a key outside `incoming/`, does not raise, because it would otherwise burn retries and land in the dead-letter queue for no reason. Both behaviours are pinned by tests.
+* **An alarm on the dead-letter queue.** A message in the queue means a file was not processed and nobody was told. The alarm sends that to the same SNS topic as the Connect alarms.
+* **Object keys are decoded.** S3 sends keys URL-encoded (a space is `+`, other characters are `%XX`). Using the raw key would record a name that does not exist in the bucket.
+* **The function never reads the file.** It works from the event metadata only, so its role has no S3 or KMS permission, just `dynamodb:PutItem` on one table and `sqs:SendMessage` on one queue.
+* **A private, encrypted bucket.** Public access blocked, versioning on, a customer-managed KMS key with rotation, and files expire after 7 days so a lab cannot quietly accumulate cost.
+
+**Try it:** upload any file under `incoming/` in the bucket named by `terraform output recordings_bucket`, then look at the DynamoDB table named by `terraform output recording_events_table`. Upload the identical file again and there is still one row; the Lambda log says the delivery was a duplicate.
+
+---
+
 ## Running it
 
 ### Cost
@@ -184,7 +211,7 @@ Terraform builds the instance, queue, routing profile, flow, both Lambdas, the A
 ### Test
 
 ```bash
-pytest -q                                   # 27 tests, no AWS or Salesforce access needed
+pytest -q                                   # 42 tests, no AWS or Salesforce access needed
 python3 scripts/audit\_flow.py terraform/flows/main.json.tftpl
 ```
 
@@ -209,6 +236,7 @@ A short list of what this is not, because a repository that claims more than it 
 * **No authentication on the chat endpoint.** A real deployment would put the broker behind an authenticated session, so the queue slot is attributable to someone.
 * **Terraform-managed flow JSON is workable, not pleasant.** It is verbose and the diffs are noisy. On a large estate I would author flows in the console, export, template and commit them, with the pipeline enforcing that production only ever changes through the repository. Hand-editing flow JSON looks rigorous and produces bugs.
 * **The Salesforce lookup is not connected to a contact flow.** It returns the right answer from the Lambda console; invoking it from the flow, copying the result into contact attributes and showing it to the agent (a screen pop, or Service Cloud Voice) is not built. It matches one Contact by exact phone number only, and uses a free Developer Edition org with fictional data.
+* **The recording router only records arrivals.** It does not read, transcribe or redact a recording, the bucket is not connected to Connect's recording settings, and nothing redrives messages from the dead-letter queue: a person looks at them. Retries are 2, set in Terraform, and the alarm fires on any message waiting in the queue.
 * **One queue, one routing profile.** Enough to demonstrate priority and delay; not a routing model.
 
 

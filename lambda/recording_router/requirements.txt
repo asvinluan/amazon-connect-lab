@@ -1,0 +1,3 @@
+# No third-party packages: boto3 is already in the Lambda runtime.
+# Keeping the dependency list empty keeps the deployment package small
+# and removes a supply-chain surface from a function that runs on every event.
