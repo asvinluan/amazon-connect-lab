@@ -176,7 +176,7 @@ A short list of what this is not, because a repository that claims more than it 
 * **No authentication on the chat endpoint.** A real deployment would put the broker behind an authenticated session, so the queue slot is attributable to someone.
 * **Terraform-managed flow JSON is workable, not pleasant.** It is verbose and the diffs are noisy. On a large estate I would author flows in the console, export, template and commit them, with the pipeline enforcing that production only ever changes through the repository. Hand-editing flow JSON looks rigorous and produces bugs.
 * **One queue, one routing profile.** Enough to demonstrate priority and delay; not a routing model.
-* Workflow rerun test
+
 
 \---
 
