@@ -30,6 +30,11 @@ output "dashboard_url" {
   value = "https://${var.region}.console.aws.amazon.com/cloudwatch/home?region=${var.region}#dashboards:name=${aws_cloudwatch_dashboard.lab.dashboard_name}"
 }
 
+output "salesforce_lookup_function_name" {
+  description = "Salesforce caller lookup Lambda. Test it from the Lambda console with a Contact's phone number; it is not wired into the contact flow."
+  value       = aws_lambda_function.salesforce_lookup.function_name
+}
+
 output "next_steps" {
   description = "What Terraform cannot do for you."
   value       = <<-EOT

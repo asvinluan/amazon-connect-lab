@@ -50,3 +50,9 @@ variable "alarm_email" {
 #   type        = number
 #   default     = 30
 # }
+
+variable "salesforce_secret_name" {
+  description = "Name of the Secrets Manager secret holding the Salesforce client_id, client_secret and instance_url (JSON). Created by hand, never by Terraform, so the values never enter the repository or the state file."
+  type        = string
+  default     = "lab/salesforce"
+}

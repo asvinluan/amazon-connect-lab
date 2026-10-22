@@ -1,6 +1,6 @@
 # Amazon Connect reference lab
 
-A small, runnable Amazon Connect contact centre defined entirely in Terraform, with a Python Lambda on the voice path, a credential-broker API behind API Gateway for web chat, CloudWatch alarms tied to failures this build can actually produce, and a GitHub Actions pipeline that checks and plans on every pull request.
+A small, runnable Amazon Connect contact centre defined entirely in Terraform, with a Python Lambda on the voice path, a credential-broker API behind API Gateway for web chat, CloudWatch alarms tied to failures this build can actually produce, and a GitHub Actions pipeline that checks every push and pull request, and plans when an AWS role is configured.
 
 > **This is lab work.** It is built in my own AWS account to learn and demonstrate the services, not extracted from any employer or client system. There is no client data, no proprietary configuration and no real customer information anywhere in this repository. Seed data uses fictional numbers.
 
@@ -90,7 +90,9 @@ Getting that distinction wrong is common, so it is called out in the comments of
 |`terraform/flows/main.json.tftpl`|The contact flow as a template, with ARNs injected at apply time|
 |`lambda/caller\_lookup/`|Invoked by the flow. Timeout budget, graceful degradation|
 |`lambda/chat\_broker/`|Behind API Gateway. Returns a token, never credentials|
-|`tests/`|Seven unit tests pinning the behaviour that keeps the flow safe|
+|`lambda/salesforce\_lookup/`|Looks the caller up in a Salesforce Contact (REST, OAuth 2.0). Not wired into the flow|
+|`terraform/salesforce.tf`|That Lambda, its log group and a role scoped to one action on one secret|
+|`tests/`|Unit tests pinning the behaviour that keeps both Lambdas safe: 7 for `caller_lookup`, 20 for the Salesforce lookup|
 |`scripts/audit\_flow.py`|Fails the build on dangling branches or broken references in flow JSON|
 |`scripts/export\_flows.sh`|Exports flows to disk and reports unpublished designer edits|
 |`.github/workflows/`|Terraform checks and plan; Python lint and test|
@@ -115,6 +117,37 @@ Contact attributes are string-valued, flat, and capped at 32 KB. The handler coe
 `CreateContactFlowVersion` is documented as supporting only flows of type `CAMPAIGN`, so there is no API version history for ordinary flows and no rollback to "version 3". The repository holding exported flow JSON *is* the rollback mechanism. `scripts/export\_flows.sh` pulls flows to disk and additionally diffs published content against the `$SAVED` alias, which catches edits somebody left unpublished in the designer — a silent failure that takes a flow down with nothing in the console to explain it.
 
 \---
+
+## Salesforce caller lookup
+
+A second take on the caller lookup: instead of a DynamoDB table, the Lambda asks a **Salesforce Developer Edition** org who is calling. It is a separate function (`lambda/salesforce_lookup/`) and is **not wired into the contact flow** — the voice path above is unchanged. It is tested on its own from the Lambda console.
+
+```text
+event (caller number) -> Lambda -> Secrets Manager (client id, secret, org URL)
+                                -> Salesforce /services/oauth2/token   (client-credentials flow)
+                                -> Salesforce /services/data/v63.0/query?q=SELECT ... FROM Contact WHERE Phone ...
+                       <- flat map of strings: status, callerName, company, reason
+```
+
+**What it does and why**
+
+* **OAuth 2.0 client-credentials flow** with an External Client App and a Run-As user, so no person has to log in for a phone call. The token is cached for ten minutes and refreshed once if Salesforce answers 401.
+* **The `+` in the phone number is sent as `%2B`.** In a URL query string a raw `+` means "space", so an unencoded E.164 number matches nobody — and fails quietly, which is worse than failing loudly. A test pins this.
+* **A 4-second total budget, never more than 2 seconds per call.** Connect abandons a flow Lambda at 8 seconds. Every outbound call gets what is left of the budget, and the Lambda timeout is the hard backstop.
+* **Failures degrade, they do not raise.** Bad credentials, a timeout, an outage and a malformed secret each return `status` plus a `reason` code (`token_http_400`, `query_timeout`, `secret_invalid_json` ...), and the caller is still greeted as "there". An unknown number is `not_found`, not an error.
+* **The client secret never leaves AWS or the log.** It lives in Secrets Manager, is read with a role that can call one action on one secret, is only ever sent to a host ending in `salesforce.com`, and is asserted absent from logs and responses by a test.
+* **Standard library only.** `urllib` for the HTTP, `boto3` from the Lambda runtime. No dependencies to patch.
+
+**Set it up** (the secret is created by hand so the values never enter this repository or the Terraform state):
+
+1. In Salesforce, create an External Client App with the OAuth 2.0 client-credentials flow enabled and a Run-As user.
+2. In Secrets Manager, create a plaintext secret named `lab/salesforce` containing valid JSON:
+   `{"client_id": "...", "client_secret": "...", "instance_url": "https://<your-org>.my.salesforce.com"}`
+3. `terraform apply`, then test from the Lambda console with `{"Details": {"Parameters": {"callerNumber": "+61..."}}}`.
+
+Salesforce phone fields are free text, so the match is exact: the lookup tries the E.164 form and the Australian national form (`04...`), and a Contact stored as `(02) 1234 5678` will not match.
+
+---
 
 ## Running it
 
@@ -151,7 +184,7 @@ Terraform builds the instance, queue, routing profile, flow, both Lambdas, the A
 ### Test
 
 ```bash
-pytest -q                                   # 7 tests, no AWS access needed
+pytest -q                                   # 27 tests, no AWS or Salesforce access needed
 python3 scripts/audit\_flow.py terraform/flows/main.json.tftpl
 ```
 
@@ -175,6 +208,7 @@ A short list of what this is not, because a repository that claims more than it 
 * **No WAF.** Omitted on cost. In production a web ACL with a rate-based rule belongs in front of the chat API via CloudFront — every request the broker serves creates a real contact occupying a real queue slot, so rate limiting there is queue-flood protection rather than generic web hygiene.
 * **No authentication on the chat endpoint.** A real deployment would put the broker behind an authenticated session, so the queue slot is attributable to someone.
 * **Terraform-managed flow JSON is workable, not pleasant.** It is verbose and the diffs are noisy. On a large estate I would author flows in the console, export, template and commit them, with the pipeline enforcing that production only ever changes through the repository. Hand-editing flow JSON looks rigorous and produces bugs.
+* **The Salesforce lookup is not connected to a contact flow.** It returns the right answer from the Lambda console; invoking it from the flow, copying the result into contact attributes and showing it to the agent (a screen pop, or Service Cloud Voice) is not built. It matches one Contact by exact phone number only, and uses a free Developer Edition org with fictional data.
 * **One queue, one routing profile.** Enough to demonstrate priority and delay; not a routing model.
 
 

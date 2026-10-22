@@ -1,0 +1,4 @@
+# No third-party packages: boto3 is already in the Lambda runtime, and the
+# Salesforce calls use the standard library (urllib). An empty dependency list
+# keeps the package tiny and removes a supply-chain surface from a function
+# that runs on every call and holds a client secret.
