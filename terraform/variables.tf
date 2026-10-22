@@ -43,8 +43,10 @@ variable "alarm_email" {
   default     = ""
 }
 
-variable "recording_retention_days" {
-  description = "Not used by this lab (no recordings are configured) but kept to show the dev/prod divergence pattern: a lab keeps 30 days, a regulated production estate keeps 2555 (seven years)."
-  type        = number
-  default     = 30
-}
+# Reserved for future log-retention configuration.
+#
+# variable "recording_retention_days" {
+#   description = "CloudWatch retention period"
+#   type        = number
+#   default     = 30
+# }
