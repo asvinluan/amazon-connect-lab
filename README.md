@@ -2,7 +2,7 @@
 
 A small, runnable Amazon Connect contact centre defined entirely in Terraform, with a Python Lambda on the voice path, a credential-broker API behind API Gateway for web chat, CloudWatch alarms tied to failures this build can actually produce, and a GitHub Actions pipeline that checks and plans on every pull request.
 
-> \*\*This is lab work.\*\* It is built in my own AWS account to learn and demonstrate the services, not extracted from any employer or client system. There is no client data, no proprietary configuration and no real customer information anywhere in this repository. Seed data uses fictional numbers.
+> \\This is lab work.\\ It is built in my own AWS account to learn and demonstrate the services, not extracted from any employer or client system. There is no client data, no proprietary configuration and no real customer information anywhere in this repository. Seed data uses fictional numbers.
 
 Built by Anthony Vinluan — Melbourne, Australia.
 
