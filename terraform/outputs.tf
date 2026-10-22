@@ -82,3 +82,13 @@ output "next_steps" {
     Admin site: https://${var.instance_alias}.my.connect.aws
   EOT
 }
+
+output "ai_assist_function_name" {
+  description = "AI assist Lambda. Test it from the Lambda console, or run scripts/run_ai_eval.py --function <this name>."
+  value       = aws_lambda_function.ai_assist.function_name
+}
+
+output "ai_guardrail_version" {
+  description = "The numbered guardrail version the Lambda is pinned to."
+  value       = aws_bedrock_guardrail_version.ai_assist.version
+}

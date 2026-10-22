@@ -56,3 +56,15 @@ variable "salesforce_secret_name" {
   type        = string
   default     = "lab/salesforce"
 }
+
+variable "bedrock_model_id" {
+  description = "Model or inference profile ID for the AI assist Lambda (Bedrock console > Cross-region inference). The default is an APAC inference profile for Amazon Nova Lite, which needs no use-case form. Change it if your console shows a different ID."
+  type        = string
+  default     = "apac.amazon.nova-lite-v1:0"
+}
+
+variable "enable_model_invocation_logging" {
+  description = "Turn on Bedrock model invocation logging to CloudWatch Logs. This setting is shared by the whole account and region, and the logs hold prompt and answer text, so keep it to lab data."
+  type        = bool
+  default     = true
+}

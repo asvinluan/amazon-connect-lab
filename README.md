@@ -95,7 +95,10 @@ Getting that distinction wrong is common, so it is called out in the comments of
 |`terraform/salesforce\_flow.tf`, `terraform/flows/salesforce.json.tftpl`|Second contact flow that invokes the Salesforce lookup, copies the name into contact attributes and greets the caller|
 |`lambda/recording\_router/`|Reacts to a file landing in S3 (event-driven). Idempotent writes, retries, dead-letter queue|
 |`terraform/events.tf`|The encrypted bucket, DynamoDB table, S3 trigger, dead-letter queue and its alarm|
-|`tests/`|Unit tests pinning the behaviour that keeps the Lambdas safe (7 `caller_lookup`, 20 Salesforce lookup, 15 recording router) and 18 structural checks on the contact flow JSON|
+|`lambda/ai\_assist/`|Guarded generative answer: Bedrock Converse with a numbered guardrail version, a grounded prompt, safe fallback|
+|`terraform/ai\_assist.tf`|The guardrail and its version, the Lambda, model invocation logging, three log-based metrics and alarms|
+|`evals/` and `scripts/run\_ai\_eval.py`|15 prompts with expected outcomes, and the runner that scores the deployed function|
+|`tests/`|Unit tests pinning the behaviour that keeps the Lambdas safe (7 `caller_lookup`, 20 Salesforce lookup, 15 recording router, 32 AI assist and its evaluation set) and 18 structural checks on the contact flow JSON|
 |`scripts/audit\_flow.py`|Fails the build on dangling branches or broken references in flow JSON|
 |`scripts/export\_flows.sh`|Exports flows to disk and reports unpublished designer edits|
 |`.github/workflows/`|Terraform checks and plan; Python lint and test|
@@ -177,6 +180,18 @@ S3 bucket (incoming/)  ->  Lambda recording_router  ->  DynamoDB (one row per fi
 
 ---
 
+## AI assist: guardrails, grounding and monitoring
+
+A guarded generative answer. A caller's question goes to a foundation model through the Amazon Bedrock Converse API, with a **Bedrock guardrail** attached, and the Lambda returns flat strings (`status`, `answer`, `reason`) so a contact flow can read them. It is a separate function (`lambda/ai_assist/`, `terraform/ai_assist.tf`). It is not called by a flow; it is tested from the Lambda console and by an evaluation script.
+
+* **The guardrail is Terraform, and it is a numbered version.** It denies two topics (financial and legal advice), sets five content filters (hate, insults, violence, misconduct, prompt attack) and handles three kinds of personal data (card numbers blocked, email and phone masked). The Lambda is pinned to the published version, never `DRAFT`, so the behaviour under test is the behaviour that runs.
+* **The caller's text is sent as `guardContent`.** The guardrail then evaluates exactly the caller's words, including for prompt attacks, rather than the whole prompt.
+* **The prompt is grounded.** `system_prompt.txt` holds the only facts the model may use and says to admit "I do not have that" and offer an agent instead of guessing. Replies are capped at two short sentences because they are read aloud.
+* **A blocked prompt is a normal result, not an error.** `status` is `blocked` and `reason` names which policy fired (for example `guardrail:topicPolicy`), never the content.
+* **It never raises.** A timeout, throttling, a permissions error or an empty reply each return `status = "error"` and a safe sentence, so a caller is handed to an agent rather than left in silence. The client gives up at 5 seconds, under Connect's 8-second ceiling.
+* **Monitoring without leaking.** Each call prints one JSON line (status, policies fired, latency, question length). The question is never logged by the function. Three metric filters turn the lines into metrics, and three alarms (blocked-prompt spike, model errors, p95 latency over 4 seconds) notify the existing SNS topic. Bedrock model invocation logging is also switched on, to a separate log group.
+* **It is evaluated, not just configured.** `evals/guardrail_cases.json` holds 15 prompts: 5 in scope, 2 grounding checks, 2 financial, 2 legal, 2 prompt-attack, 1 card number and 1 abuse. `scripts/run_ai_eval.py` sends each to the deployed function, compares the outcome with the expected one and writes `evals/results.json`.
+
 ## Running it
 
 ### Cost
@@ -212,8 +227,9 @@ Terraform builds the instance, queue, routing profile, flow, both Lambdas, the A
 ### Test
 
 ```bash
-pytest -q                                   # 60 tests, no AWS or Salesforce access needed
+pytest -q                                   # 92 tests, no AWS, Bedrock or Salesforce access needed
 python3 scripts/audit\_flow.py terraform/flows/main.json.tftpl
+python scripts/run\_ai\_eval.py --function <ai\_assist\_function\_name>   # needs the AI assist deployed
 ```
 
 ### Destroy
@@ -238,6 +254,7 @@ A short list of what this is not, because a repository that claims more than it 
 * **Terraform-managed flow JSON is workable, not pleasant.** It is verbose and the diffs are noisy. On a large estate I would author flows in the console, export, template and commit them, with the pipeline enforcing that production only ever changes through the repository. Hand-editing flow JSON looks rigorous and produces bugs.
 * **The Salesforce flow greets by name; it does not screen-pop.** `lab-salesforce-flow` invokes the lookup and copies the name into contact attributes. Showing it to the agent (a screen pop, or Service Cloud Voice) is not built. It matches one Contact by exact phone number (E.164 or 04xx form). The flow is exercised by hand (flow designer test or a claimed number), not in CI; CI checks the flow JSON structure only.
 * **The recording router only records arrivals.** It does not read, transcribe or redact a recording, the bucket is not connected to Connect's recording settings, and nothing redrives messages from the dead-letter queue: a person looks at them. Retries are 2, set in Terraform, and the alarm fires on any message waiting in the queue.
+* **The AI assist is not connected to a call, and it is tested on a small set.** Fifteen prompts show the controls work; they do not measure how often a guardrail is wrong at scale. The grounding check is a keyword heuristic. There is no retrieval (no knowledge base), so the model draws on a fixed prompt only. Model invocation logging is one setting per account and region and stores prompt and answer text, so use lab data only.
 * **One queue, one routing profile.** Enough to demonstrate priority and delay; not a routing model.
 
 

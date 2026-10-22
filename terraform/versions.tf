@@ -6,7 +6,7 @@ terraform {
       source = "hashicorp/aws"
       # Pinned. An unpinned provider upgrade is an unreviewed change
       # to production, which is exactly what this repo exists to prevent.
-      version = "~> 5.60"
+      version = "~> 5.80"
     }
     archive = {
       source  = "hashicorp/archive"
