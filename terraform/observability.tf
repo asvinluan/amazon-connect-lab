@@ -11,7 +11,7 @@
 # ---------------------------------------------------------------------------
 
 resource "aws_sns_topic" "alarms" {
-  name = "${var.instance_alias}-alarms"
+  name              = "${var.instance_alias}-alarms"
   kms_master_key_id = "alias/aws/sns"
 }
 
