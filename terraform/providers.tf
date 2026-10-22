@@ -11,5 +11,8 @@ provider "aws" {
   }
 }
 
-data "aws_caller_identity" "current" {}
-data "aws_region" "current" {}
+# Reserved for future tagging/account-aware resources.
+# data "aws_caller_identity" "current" {}
+
+# Reserved for future region-aware resources.
+# data "aws_region" "current" {}
