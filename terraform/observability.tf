@@ -135,10 +135,10 @@ resource "aws_cloudwatch_metric_alarm" "lambda_slow" {
   alarm_name        = "${var.instance_alias}-caller-lookup-slow"
   alarm_description = "Caller lookup p99 duration is approaching Connect's 8-second invocation ceiling."
 
-  namespace           = "AWS/Lambda"
-  metric_name         = "Duration"
-  extended_statistic  = "p99"
-  period              = 300
+  namespace          = "AWS/Lambda"
+  metric_name        = "Duration"
+  extended_statistic = "p99"
+  period             = 300
 
   dimensions = {
     FunctionName = aws_lambda_function.caller_lookup.function_name
