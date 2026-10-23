@@ -1,0 +1,6 @@
+Lab Line: privacy and call recordings
+
+Calls to the Lab Line may be recorded for quality and training.
+Recordings are kept for 7 days in a private, encrypted store and are then deleted automatically.
+Personal details are used only to find the caller's record and are not shared with anyone else.
+Card numbers are never stored.

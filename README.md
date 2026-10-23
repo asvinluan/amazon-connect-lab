@@ -98,6 +98,7 @@ Getting that distinction wrong is common, so it is called out in the comments of
 |`lambda/ai\_assist/`|Guarded generative answer: Bedrock Converse with a numbered guardrail version, a grounded prompt, safe fallback|
 |`terraform/ai\_assist.tf`|The guardrail and its version, the Lambda, model invocation logging, three log-based metrics and alarms|
 |`evals/` and `scripts/run\_ai\_eval.py`|15 prompts with expected outcomes, and the runner that scores the deployed function|
+|`knowledge/`|Five fictional help documents for the Amazon Q in Connect knowledge base (built by hand in the console, not Terraform)|
 |`tests/`|Unit tests pinning the behaviour that keeps the Lambdas safe (7 `caller_lookup`, 20 Salesforce lookup, 15 recording router, 32 AI assist and its evaluation set) and 18 structural checks on the contact flow JSON|
 |`scripts/audit\_flow.py`|Fails the build on dangling branches or broken references in flow JSON|
 |`scripts/export\_flows.sh`|Exports flows to disk and reports unpublished designer edits|
@@ -192,6 +193,14 @@ A guarded generative answer. A caller's question goes to a foundation model thro
 * **Monitoring without leaking.** Each call prints one JSON line (status, policies fired, latency, question length). The question is never logged by the function. Three metric filters turn the lines into metrics, and three alarms (blocked-prompt spike, model errors, p95 latency over 4 seconds) notify the existing SNS topic. Bedrock model invocation logging is also switched on, to a separate log group.
 * **It is evaluated, not just configured.** `evals/guardrail_cases.json` holds 15 prompts: 5 in scope, 2 grounding checks, 2 financial, 2 legal, 2 prompt-attack, 1 card number and 1 abuse. `scripts/run_ai_eval.py` sends each to the deployed function, compares the outcome with the expected one and writes `evals/results.json`.
 
+## Knowledge base for Amazon Q in Connect
+
+The retrieval half of the AI work. Five short, fictional help documents in `knowledge/` (opening hours, reaching an agent, what to have ready, callbacks, privacy and recordings) are loaded into an S3 bucket and added as a knowledge base on an Amazon Connect **AI agents** domain, so an agent can type a question in the agent workspace and get an answer drawn from those documents, with links to the source.
+
+* **Built by hand in the console, not Terraform.** The domain and the S3 integration were created in the Connect console. The documents are the only part held in this repository.
+* **The same facts as the guardrail Lambda.** The documents and `lambda/ai_assist/system_prompt.txt` agree (8am to 6pm AEST, press 0 for an agent), so the two AI pieces can be tested against one set of facts.
+* **Tested by manual search, with questions that should and should not be answered.** Seven questions the documents answer and two they do not (the model should decline rather than invent), asked from the agent workspace.
+
 ## Running it
 
 ### Cost
@@ -255,6 +264,7 @@ A short list of what this is not, because a repository that claims more than it 
 * **The Salesforce flow greets by name; it does not screen-pop.** `lab-salesforce-flow` invokes the lookup and copies the name into contact attributes. Showing it to the agent (a screen pop, or Service Cloud Voice) is not built. It matches one Contact by exact phone number (E.164 or 04xx form). The flow is exercised by hand (flow designer test or a claimed number), not in CI; CI checks the flow JSON structure only.
 * **The recording router only records arrivals.** It does not read, transcribe or redact a recording, the bucket is not connected to Connect's recording settings, and nothing redrives messages from the dead-letter queue: a person looks at them. Retries are 2, set in Terraform, and the alarm fires on any message waiting in the queue.
 * **The AI assist is not connected to a call, and it is tested on a small set.** Fifteen prompts show the controls work; they do not measure how often a guardrail is wrong at scale. The grounding check is a keyword heuristic. There is no retrieval (no knowledge base), so the model draws on a fixed prompt only. Model invocation logging is one setting per account and region and stores prompt and answer text, so use lab data only.
+* **The knowledge base is a manual console build and a small one.** Five fictional documents, tested by typing questions in the agent workspace. It is not wired into a contact flow, not driven by live call analytics, and not managed as code.
 * **One queue, one routing profile.** Enough to demonstrate priority and delay; not a routing model.
 
 

@@ -1,0 +1,8 @@
+Lab Line: opening hours
+
+The Lab Line is a demonstration contact centre built for a technical lab. It is not a real business.
+
+Opening hours are 8am to 6pm Australian Eastern Standard Time (AEST), Monday to Friday.
+The Lab Line is closed on weekends and on public holidays.
+Outside opening hours, callers hear a recorded message and can ask for a callback.
+The opening hours are the same for every caller, in every state.

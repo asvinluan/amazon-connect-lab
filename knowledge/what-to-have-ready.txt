@@ -1,0 +1,5 @@
+Lab Line: what to have ready before you call
+
+Have your full name and the phone number you are calling from.
+The agent uses your phone number to find your record. If your number is not on file, the agent asks for your name and date of birth instead.
+Never read out a full card number, PIN or password. Agents never ask for them.

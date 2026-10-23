@@ -1,0 +1,6 @@
+Lab Line: how to reach an agent
+
+To speak to an agent, press 0 at any time during the call, or stay on the line. The call is then placed in the general queue.
+Agents answer calls in the order they arrive.
+If no agent is available, the caller hears a short message and stays in the queue.
+The general queue holds up to 5 callers. When the queue is full, new callers hear a message asking them to call back later.

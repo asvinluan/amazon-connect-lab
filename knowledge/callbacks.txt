@@ -1,0 +1,5 @@
+Lab Line: callbacks
+
+A caller can ask for a callback outside opening hours, or when the queue is full.
+A callback is made within one business day, between 8am and 6pm AEST.
+Callbacks are made to the number the caller phoned from, unless the caller gives a different number.
