@@ -1,5 +1,7 @@
 # Amazon Connect reference lab
 
+[![python](https://github.com/asvinluan/amazon-connect-lab/actions/workflows/python.yml/badge.svg)](https://github.com/asvinluan/amazon-connect-lab/actions/workflows/python.yml) [![terraform](https://github.com/asvinluan/amazon-connect-lab/actions/workflows/terraform.yml/badge.svg)](https://github.com/asvinluan/amazon-connect-lab/actions/workflows/terraform.yml)
+
 A small, runnable Amazon Connect contact centre defined entirely in Terraform, with a Python Lambda on the voice path, a credential-broker API behind API Gateway for web chat, CloudWatch alarms tied to failures this build can actually produce, and a GitHub Actions pipeline that checks every push and pull request, and plans when an AWS role is configured.
 
 > **This is lab work.** It is built in my own AWS account to learn and demonstrate the services, not extracted from any employer or client system. There is no client data, no proprietary configuration and no real customer information anywhere in this repository. Seed data uses fictional numbers.
@@ -93,16 +95,21 @@ Getting that distinction wrong is common, so it is called out in the comments of
 |`lambda/salesforce\_lookup/`|Looks the caller up in a Salesforce Contact (REST, OAuth 2.0). Invoked by `lab-salesforce-flow`|
 |`terraform/salesforce.tf`|That Lambda, its log group and a role scoped to one action on one secret|
 |`terraform/salesforce\_flow.tf`, `terraform/flows/salesforce.json.tftpl`|Second contact flow that invokes the Salesforce lookup, copies the name into contact attributes and greets the caller|
+|`lambda/servicenow_incident/`|TypeScript Lambda (Node 22, Powertools). Identifies the caller, creates or finds a ServiceNow incident, reads a ticket's state, adds a work note when the call ends|
+|`terraform/servicenow.tf`|That Lambda, its log group, a role scoped to one secret, the call-ended EventBridge rule and four alarms|
+|`terraform/servicenow_flow.tf`, `terraform/flows/servicenow.json.tftpl`|Third contact flow, `lab-servicenow-flow`: press 1 to log an incident, press 2 to check a ticket|
+|`scripts/servicenow/`|Offline check, secret storage, plan, Lambda test, removal, a guided `run-all` and `install-workflows` (which copies the workflow files from `ci/servicenow/` into `.github/workflows/`), each as a PowerShell and a bash script|
+|`docs/`|ServiceNow build manual and two runbooks (PowerShell, bash)|
 |`lambda/recording\_router/`|Reacts to a file landing in S3 (event-driven). Idempotent writes, retries, dead-letter queue|
 |`terraform/events.tf`|The encrypted bucket, DynamoDB table, S3 trigger, dead-letter queue and its alarm|
 |`lambda/ai\_assist/`|Guarded generative answer: Bedrock Converse with a numbered guardrail version, a grounded prompt, safe fallback|
 |`terraform/ai\_assist.tf`|The guardrail and its version, the Lambda, model invocation logging, three log-based metrics and alarms|
 |`evals/` and `scripts/run\_ai\_eval.py`|15 prompts with expected outcomes, and the runner that scores the deployed function|
 |`knowledge/`|Five fictional help documents for the Amazon Q in Connect knowledge base (built by hand in the console, not Terraform)|
-|`tests/`|Unit tests pinning the behaviour that keeps the Lambdas safe (7 `caller_lookup`, 20 Salesforce lookup, 15 recording router, 32 AI assist and its evaluation set) and 18 structural checks on the contact flow JSON|
+|`tests/`|Unit tests pinning the behaviour that keeps the Lambdas safe (7 `caller_lookup`, 20 Salesforce lookup, 15 recording router, 32 AI assist and its evaluation set) and 34 structural checks on the three contact flow JSON templates. The ServiceNow Lambda has its own 64 TypeScript tests in `lambda/servicenow_incident/test/`|
 |`scripts/audit\_flow.py`|Fails the build on dangling branches or broken references in flow JSON|
 |`scripts/export\_flows.sh`|Exports flows to disk and reports unpublished designer edits|
-|`.github/workflows/`|Terraform checks and plan; Python lint and test|
+|`.github/workflows/`|Terraform checks and plan; Python lint and test; TypeScript typecheck, test, bundle and dependency audit|
 
 \---
 
@@ -153,6 +160,39 @@ event (caller number) -> Lambda -> Secrets Manager (client id, secret, org URL)
 3. `terraform apply`, then test from the Lambda console with `{"Details": {"Parameters": {"callerNumber": "+61..."}}}`.
 
 Salesforce phone fields are free text, so the match is exact: the lookup tries the E.164 form and the Australian national form (`04...`), and a Contact stored as `(02) 1234 5678` will not match.
+
+---
+
+## ServiceNow incident lab
+
+A third flow, `lab-servicenow-flow`, ties the voice path to **ServiceNow** (a free Personal Developer Instance). Press 1 and the caller is identified by phone number, an **incident** is created, and the number is read back twice before the call is queued. Press 2 and the caller keys in a ticket number and hears its state. When the call ends, a work note is added to the incident. This Lambda is **TypeScript** (Node 22, arm64, esbuild bundle, AWS Lambda Powertools for logs and metrics), where the other two are Python.
+
+```text
+Caller -> lab-servicenow-flow -> Lambda -> Secrets Manager (instance_url, username, password)
+                                        -> ServiceNow Table API  sys_user   (who is calling?)
+                                        -> ServiceNow Table API  incident   (find, create, read state)
+                              <- flat map of strings: status, reason, incidentSpoken, callerName, statusText
+
+Call ends -> EventBridge (DISCONNECTED, VOICE) -> same Lambda -> work note on the incident
+```
+
+**What it does and why**
+
+* **Create is idempotent.** The Connect contact id is stored in the incident's `correlation_id`. A retry finds that incident and returns it instead of making a second ticket.
+* **Timeout budget.** 3 seconds per ServiceNow call and 6 seconds in total, inside Connect's 8-second ceiling. New calls are not started when under 50 ms remain.
+* **Failures degrade, they do not raise.** A bad password, a hibernating instance, a timeout and an HTML error page each return `status` plus a `reason`, and every failure path in the flow still ends with the caller reaching an agent.
+* **Least privilege.** A ServiceNow user with the `itil` role and web-service-access-only. The Lambda role can read one secret.
+* **The password never leaves AWS or the log.** The secret is created by a script that checks the login against ServiceNow first and never prints the password; it is not in Terraform or in this repository. The host must end in `.service-now.com` over https.
+* **Safe queries.** The phone number is checked for digits, then URL-encoded (`+` becomes `%2B`) before it goes into a query. A status check reads back only the state.
+* **Metrics and alarms.** Powertools writes `IncidentCreated`, `IncidentExisting`, `IncidentFallback`, `StatusLookup`, `WorkNoteAdded`, `WorkNoteFailed` and `HandlerLatencyMs`. Four alarms: errors, slow p99, repeated fallbacks, failed work note.
+
+**Set it up.** Follow `docs/RUNBOOK-SERVICENOW-POWERSHELL.md` or `docs/RUNBOOK-SERVICENOW-BASH.md`; the reasoning and ServiceNow setup are in `docs/SERVICENOW-LAB-BUILD-MANUAL.md`. In short: `scripts/servicenow/check-offline`, then `store-secret`, `plan` (expect 14 to add), `terraform apply tfplan`, then `invoke-test` (8 checks).
+
+Terraform zips `lambda/servicenow_incident/dist`, so the Lambda is built before `terraform plan`. The plan script and the CI plan job both do that.
+
+**Automation.** `scripts/servicenow/run-all` walks the whole path (offline check, secret, plan, a typed `apply`, live test) and stops at the first problem. `scripts/servicenow/install-workflows` shows what it will copy, backs up anything it would replace, asks, and installs the two workflow files, because GitHub only runs files found in `.github/workflows/`.
+
+**Related labs.** This is the simple build: basic authentication, incidents only, no caller verification. The design-grade version is a separate repository, [`amazon-connect-servicenow-service-desk`](https://github.com/asvinluan/amazon-connect-servicenow-service-desk): requests as well as incidents, caller verification before a status check, OAuth 2.0 and an audit trail, in TypeScript with its own scripts and tests. A bank-themed walk-through of that design (a failed card payment, where ServiceNow sits, what a real bank would add) is in [`aws-enterprise-bank-servicenow-lab`](https://github.com/asvinluan/aws-enterprise-bank-servicenow-lab). This lab stays as it is. The Salesforce lookup that identifies the caller by CRM record stays here, in `lab-salesforce-flow`.
 
 ---
 
@@ -212,6 +252,7 @@ The two things that do cost money: a **claimed phone number** is billed monthly 
 ### Prerequisites
 
 * Terraform >= 1.6
+* Node.js 22 or newer, only for the ServiceNow Lambda (`winget install OpenJS.NodeJS.LTS` on Windows)
 * AWS CLI configured for an account you own
 * A region where Connect is available — this defaults to `ap-southeast-2`
 
@@ -236,8 +277,9 @@ Terraform builds the instance, queue, routing profile, flow, both Lambdas, the A
 ### Test
 
 ```bash
-pytest -q                                   # 92 tests, no AWS, Bedrock or Salesforce access needed
+pytest -q                                   # 108 tests, no AWS, Bedrock, Salesforce or ServiceNow access needed
 python3 scripts/audit\_flow.py terraform/flows/main.json.tftpl
+cd lambda/servicenow_incident && npm ci && npm run check   # typecheck, 64 tests, bundle
 python scripts/run\_ai\_eval.py --function <ai\_assist\_function\_name>   # needs the AI assist deployed
 ```
 
@@ -262,6 +304,7 @@ A short list of what this is not, because a repository that claims more than it 
 * **No authentication on the chat endpoint.** A real deployment would put the broker behind an authenticated session, so the queue slot is attributable to someone.
 * **Terraform-managed flow JSON is workable, not pleasant.** It is verbose and the diffs are noisy. On a large estate I would author flows in the console, export, template and commit them, with the pipeline enforcing that production only ever changes through the repository. Hand-editing flow JSON looks rigorous and produces bugs.
 * **The Salesforce flow greets by name; it does not screen-pop.** `lab-salesforce-flow` invokes the lookup and copies the name into contact attributes. Showing it to the agent (a screen pop, or Service Cloud Voice) is not built. It matches one Contact by exact phone number (E.164 or 04xx form). The flow is exercised by hand (flow designer test or a claimed number), not in CI; CI checks the flow JSON structure only.
+* **The ServiceNow lab is proven offline, not live.** The Lambda is tested against a fake ServiceNow (64 tests) and the flow JSON is audited, but the Terraform has not been applied and nothing has been called against a live ServiceNow or Connect instance from this repository yet. It uses basic authentication (a production build would use OAuth 2.0 and rotate the secret), matches the caller on free-text phone fields, does not verify the caller on a status check (only the state is read back), cannot reach a hibernating developer instance, and has no dead-letter queue for failed work notes (the alarm fires instead).
 * **The recording router only records arrivals.** It does not read, transcribe or redact a recording, the bucket is not connected to Connect's recording settings, and nothing redrives messages from the dead-letter queue: a person looks at them. Retries are 2, set in Terraform, and the alarm fires on any message waiting in the queue.
 * **The AI assist is not connected to a call, and it is tested on a small set.** Fifteen prompts show the controls work; they do not measure how often a guardrail is wrong at scale. The grounding check is a keyword heuristic. There is no retrieval (no knowledge base), so the model draws on a fixed prompt only. Model invocation logging is one setting per account and region and stores prompt and answer text, so use lab data only.
 * **The knowledge base is a manual console build and a small one.** Five fictional documents, tested by typing questions in the agent workspace. It is not wired into a contact flow, not driven by live call analytics, and not managed as code.
@@ -269,6 +312,11 @@ A short list of what this is not, because a repository that claims more than it 
 
 
 \---
+
+## Next lab: Contact Lens
+
+`amazon-connect-contact-lens-lab` covers conversational analytics: transcripts,
+sentiment, categories and ideas for sending them to ServiceNow.
 
 ## Licence
 
