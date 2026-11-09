@@ -181,12 +181,14 @@ resource "aws_lambda_function" "ai_assist" {
       MODEL_ID          = var.bedrock_model_id
       GUARDRAIL_ID      = aws_bedrock_guardrail.ai_assist.guardrail_id
       GUARDRAIL_VERSION = aws_bedrock_guardrail_version.ai_assist.version
+      AI_MODE_PARAM     = aws_ssm_parameter.ai_mode.name
     }
   }
 
   depends_on = [
     aws_cloudwatch_log_group.ai_assist,
     aws_iam_role_policy.ai_assist,
+    aws_iam_role_policy.ai_assist_mode,
   ]
 }
 

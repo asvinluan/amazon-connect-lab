@@ -24,3 +24,13 @@ build/
 .vscode/
 .idea/
 .DS_Store
+
+# Node (ServiceNow Lambda). node_modules is installed from package-lock.json,
+# dist is rebuilt by npm run build. Neither is ever committed.
+node_modules/
+dist/
+
+# Backups made by scripts/servicenow/install-workflows
+*.bak
+
+tfplan-ai

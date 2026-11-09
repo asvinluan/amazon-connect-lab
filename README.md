@@ -223,7 +223,7 @@ S3 bucket (incoming/)  ->  Lambda recording_router  ->  DynamoDB (one row per fi
 
 ## AI assist: guardrails, grounding and monitoring
 
-A guarded generative answer. A caller's question goes to a foundation model through the Amazon Bedrock Converse API, with a **Bedrock guardrail** attached, and the Lambda returns flat strings (`status`, `answer`, `reason`) so a contact flow can read them. It is a separate function (`lambda/ai_assist/`, `terraform/ai_assist.tf`). It is not called by a flow; it is tested from the Lambda console and by an evaluation script.
+A guarded generative answer. A caller's question goes to a foundation model through the Amazon Bedrock Converse API, with a **Bedrock guardrail** attached, and the Lambda returns flat strings (`status`, `answer`, `reason`) so a contact flow can read them. It is a separate function (`lambda/ai_assist/`, `terraform/ai_assist.tf`). It is tested from the Lambda console and by an evaluation script, and a second flow (`lab-ai-flow`, next section) calls it on a real call.
 
 * **The guardrail is Terraform, and it is a numbered version.** It denies two topics (financial and legal advice), sets five content filters (hate, insults, violence, misconduct, prompt attack) and handles three kinds of personal data (card numbers blocked, email and phone masked). The Lambda is pinned to the published version, never `DRAFT`, so the behaviour under test is the behaviour that runs.
 * **The caller's text is sent as `guardContent`.** The guardrail then evaluates exactly the caller's words, including for prompt attacks, rather than the whole prompt.
@@ -232,6 +232,17 @@ A guarded generative answer. A caller's question goes to a foundation model thro
 * **It never raises.** A timeout, throttling, a permissions error or an empty reply each return `status = "error"` and a safe sentence, so a caller is handed to an agent rather than left in silence. The client gives up at 5 seconds, under Connect's 8-second ceiling.
 * **Monitoring without leaking.** Each call prints one JSON line (status, policies fired, latency, question length). The question is never logged by the function. Three metric filters turn the lines into metrics, and three alarms (blocked-prompt spike, model errors, p95 latency over 4 seconds) notify the existing SNS topic. Bedrock model invocation logging is also switched on, to a separate log group.
 * **It is evaluated, not just configured.** `evals/guardrail_cases.json` holds 15 prompts: 5 in scope, 2 grounding checks, 2 financial, 2 legal, 2 prompt-attack, 1 card number and 1 abuse. `scripts/run_ai_eval.py` sends each to the deployed function, compares the outcome with the expected one and writes `evals/results.json`.
+
+## AI flow: a safe rollout on a live call
+
+`lab-ai-flow` puts the AI assist behind a keypad menu and proves the part that matters in production: what happens when the AI is off, wrong, slow or crashed.
+
+* **Keypad stands in for speech.** Keys 1 to 4 each map to a fixed question (opening hours, a stock tip, a prompt attack, a callback). The flow sends the question to the Lambda, which asks Amazon Bedrock (Amazon Nova Lite, Converse API) behind the pinned guardrail. Amazon Polly speaks the answer.
+* **A Parameter Store switch controls the AI.** `off` never calls the model, `shadow` runs it and logs the outcome but the caller hears nothing from it, `live` speaks the answer. An unreadable or unknown value fails safe to `off`. No deploy is needed to change it.
+* **Only `answered` or `blocked` is spoken.** Anything else (error, disabled, shadow) goes straight to the queue and a human.
+* **Failures were forced on real calls.** `test_crash` (the Lambda raises) and `test_slow` (it sleeps past Connect's 8-second limit) both ended with the caller reaching a queue.
+* **One JSON log line per call**: status, reason, latency, mode, contact id. The question is never logged. `scripts/ai-flow/audit-trail.ps1` reads them back.
+* **Targeted Terraform and tests.** The scripts apply only the five resources this lab owns; unit tests cover the mode switch and the flow JSON. Guide: `docs/AI-FLOW-LAB.md`.
 
 ## Knowledge base for Amazon Q in Connect
 
@@ -306,7 +317,7 @@ A short list of what this is not, because a repository that claims more than it 
 * **The Salesforce flow greets by name; it does not screen-pop.** `lab-salesforce-flow` invokes the lookup and copies the name into contact attributes. Showing it to the agent (a screen pop, or Service Cloud Voice) is not built. It matches one Contact by exact phone number (E.164 or 04xx form). The flow is exercised by hand (flow designer test or a claimed number), not in CI; CI checks the flow JSON structure only.
 * **The ServiceNow lab is proven offline, not live.** The Lambda is tested against a fake ServiceNow (64 tests) and the flow JSON is audited, but the Terraform has not been applied and nothing has been called against a live ServiceNow or Connect instance from this repository yet. It uses basic authentication (a production build would use OAuth 2.0 and rotate the secret), matches the caller on free-text phone fields, does not verify the caller on a status check (only the state is read back), cannot reach a hibernating developer instance, and has no dead-letter queue for failed work notes (the alarm fires instead).
 * **The recording router only records arrivals.** It does not read, transcribe or redact a recording, the bucket is not connected to Connect's recording settings, and nothing redrives messages from the dead-letter queue: a person looks at them. Retries are 2, set in Terraform, and the alarm fires on any message waiting in the queue.
-* **The AI assist is not connected to a call, and it is tested on a small set.** Fifteen prompts show the controls work; they do not measure how often a guardrail is wrong at scale. The grounding check is a keyword heuristic. There is no retrieval (no knowledge base), so the model draws on a fixed prompt only. Model invocation logging is one setting per account and region and stores prompt and answer text, so use lab data only.
+* **The AI assist is tested on a small set, and the call test is a keypad.** Fifteen prompts show the controls work; they do not measure how often a guardrail is wrong at scale. The live-call test (`lab-ai-flow`) uses four fixed questions on keypad digits, not speech or Amazon Lex, and was tried on a handful of personal calls with no load test. "Answered" does not mean helpful: "I do not have that information" is logged as answered. A Lambda crash writes no log row, so it needs its own alarm, which is not built. The grounding is one small facts file, not retrieval. Model invocation logging is one setting per account and region and stores prompt and answer text, so use lab data only.
 * **The knowledge base is a manual console build and a small one.** Five fictional documents, tested by typing questions in the agent workspace. It is not wired into a contact flow, not driven by live call analytics, and not managed as code.
 * **One queue, one routing profile.** Enough to demonstrate priority and delay; not a routing model.
 

@@ -68,9 +68,58 @@ _bedrock = boto3.client(
     config=Config(connect_timeout=2, read_timeout=5, retries={"max_attempts": 1}),
 )
 
+# ------------------------------------------------------------------- the switch
+#
+# off, shadow and live are the real modes. The three test_* modes exist only to
+# break the function on purpose (see docs/AI-FLOW-LAB.md).
+MODES = ("off", "shadow", "live", "test_fail", "test_crash", "test_slow")
+FAIL_SAFE_MODE = "off"
+MODE_CACHE_SECONDS = 15
+TEST_SLOW_SECONDS = 9  # longer than the Lambda timeout, so the call times out
 
-def _result(status: str, answer: str, reason: str = "") -> dict[str, str]:
-    return {"status": status, "answer": answer[:MAX_ANSWER_CHARS], "reason": reason}
+_ssm = boto3.client(
+    "ssm",
+    config=Config(connect_timeout=1, read_timeout=2, retries={"max_attempts": 1}),
+)
+_mode_cache: dict[str, Any] = {"value": FAIL_SAFE_MODE, "at": None}
+
+
+def _mode() -> str:
+    """Read the mode from Parameter Store, cached briefly, failing safe to off.
+
+    If AI_MODE_PARAM is not set (a console test, the evaluation script) the
+    function behaves as it always did: live.
+    """
+    name = os.environ.get("AI_MODE_PARAM")
+    if not name:
+        return "live"
+    now = time.monotonic()
+    at = _mode_cache["at"]
+    if at is not None and now - at < MODE_CACHE_SECONDS:
+        return str(_mode_cache["value"])
+    try:
+        value = _ssm.get_parameter(Name=name)["Parameter"]["Value"].strip().lower()
+    except (ClientError, BotoCoreError):
+        value = FAIL_SAFE_MODE
+    if value not in MODES:
+        value = FAIL_SAFE_MODE
+    _mode_cache.update(value=value, at=now)
+    return value
+
+
+def _result(status: str, answer: str, reason: str = "", mode: str = "live") -> dict[str, str]:
+    return {
+        "status": status,
+        "answer": answer[:MAX_ANSWER_CHARS],
+        "reason": reason,
+        "mode": mode,
+    }
+
+
+def _contact_id(event: dict[str, Any]) -> str:
+    """Connect sends the contact id; it lets shadow logs be joined to call records later."""
+    data = (event.get("Details") or {}).get("ContactData") or {}
+    return str(data.get("ContactId", ""))[:64]
 
 
 def _question(event: dict[str, Any]) -> Any:
@@ -97,7 +146,15 @@ def _answer_text(response: dict[str, Any]) -> str:
     return " ".join(part["text"] for part in content if isinstance(part, dict) and "text" in part)
 
 
-def _log(status: str, reason: str, stop_reason: str, started: float, question_chars: int) -> None:
+def _log(
+    status: str,
+    reason: str,
+    stop_reason: str,
+    started: float,
+    question_chars: int,
+    mode: str = "live",
+    contact_id: str = "",
+) -> None:
     """One JSON line per call. CloudWatch metric filters read these fields."""
     # A bare JSON line (not the logging module) is what the metric filters match.
     print(
@@ -109,6 +166,8 @@ def _log(status: str, reason: str, stop_reason: str, started: float, question_ch
                 "stop_reason": stop_reason,
                 "latency_ms": int((time.monotonic() - started) * 1000),
                 "question_chars": question_chars,
+                "mode": mode,
+                "contact_id": contact_id,
             }
         )
     )
@@ -116,22 +175,36 @@ def _log(status: str, reason: str, stop_reason: str, started: float, question_ch
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, str]:
     started = time.monotonic()
-    question = _question(event or {})
+    event = event or {}
+    mode = _mode()
+    contact_id = _contact_id(event)
+    question = _question(event)
+
+    def done(status: str, answer: str, reason: str, stop_reason: str, chars: int) -> dict[str, str]:
+        _log(status, reason, stop_reason, started, chars, mode, contact_id)
+        return _shadowed(_result(status, answer, reason, mode), mode)
+
+    # ---- the switch comes first: off means no model call at all
+    if mode == "off":
+        return done("disabled", "", "mode_off", "", 0)
+    if mode == "test_crash":
+        raise RuntimeError("test_crash: deliberate failure to prove the flow's error branch")
+    if mode == "test_slow":
+        time.sleep(TEST_SLOW_SECONDS)  # the Lambda timeout cuts this off
+    if mode == "test_fail":
+        return done("error", ERROR_ANSWER, "test_fail", "", 0)
 
     if not isinstance(question, str) or not question.strip():
-        _log("error", "empty_question", "", started, 0)
-        return _result("error", ERROR_ANSWER, "empty_question")
+        return done("error", ERROR_ANSWER, "empty_question", "", 0)
     question = question.strip()
     if len(question) > MAX_QUESTION_CHARS:
-        _log("error", "question_too_long", "", started, len(question))
-        return _result("error", ERROR_ANSWER, "question_too_long")
+        return done("error", ERROR_ANSWER, "question_too_long", "", len(question))
 
     model_id = os.environ.get("MODEL_ID")
     guardrail_id = os.environ.get("GUARDRAIL_ID")
     guardrail_version = os.environ.get("GUARDRAIL_VERSION")
     if not (model_id and guardrail_id and guardrail_version):
-        _log("error", "config", "", started, len(question))
-        return _result("error", ERROR_ANSWER, "config")
+        return done("error", ERROR_ANSWER, "config", "", len(question))
 
     guarded = {"guardContent": {"text": {"text": question}}}
     try:
@@ -147,27 +220,32 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, str]:
             },
         )
     except (ReadTimeoutError, ConnectTimeoutError):
-        _log("error", "timeout", "", started, len(question))
-        return _result("error", ERROR_ANSWER, "timeout")
+        return done("error", ERROR_ANSWER, "timeout", "", len(question))
     except ClientError as exc:
         code = exc.response.get("Error", {}).get("Code", "unknown")
-        _log("error", f"bedrock_{code}", "", started, len(question))
-        return _result("error", ERROR_ANSWER, f"bedrock_{code}")
+        return done("error", ERROR_ANSWER, f"bedrock_{code}", "", len(question))
     except BotoCoreError:
-        _log("error", "bedrock_unreachable", "", started, len(question))
-        return _result("error", ERROR_ANSWER, "bedrock_unreachable")
+        return done("error", ERROR_ANSWER, "bedrock_unreachable", "", len(question))
 
     stop_reason = str(response.get("stopReason", ""))
 
     if stop_reason == "guardrail_intervened":
         reason = "guardrail:" + ",".join(_triggered_policies(response))
-        _log("blocked", reason, stop_reason, started, len(question))
-        return _result("blocked", BLOCKED_ANSWER, reason)
+        return done("blocked", BLOCKED_ANSWER, reason, stop_reason, len(question))
 
     text = _answer_text(response).strip()
     if not text:
-        _log("error", "bad_response", stop_reason, started, len(question))
-        return _result("error", ERROR_ANSWER, "bad_response")
+        return done("error", ERROR_ANSWER, "bad_response", stop_reason, len(question))
 
-    _log("answered", "", stop_reason, started, len(question))
-    return _result("answered", text)
+    return done("answered", text, "", stop_reason, len(question))
+
+
+def _shadowed(result: dict[str, str], mode: str) -> dict[str, str]:
+    """In shadow mode the model ran and was logged, but the caller must not hear it.
+
+    The real outcome is kept in ``reason`` (for example ``answered``) so the flow
+    and the call record both show what the AI WOULD have done.
+    """
+    if mode != "shadow":
+        return result
+    return _result("shadow", "", f"would_be_{result['status']}", mode)

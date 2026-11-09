@@ -82,7 +82,7 @@ def test_every_value_is_a_string_for_connect(ai):
     module, fake = ai
     fake.converse.return_value = _answered()
     out = module.lambda_handler({"question": "Hours?"}, None)
-    assert set(out) == {"status", "answer", "reason"}
+    assert set(out) == {"status", "answer", "reason", "mode"}
     assert all(isinstance(v, str) for v in out.values())
 
 
